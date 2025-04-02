@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 df = pd.read_excel("Lead Conversion Data.xlsx")
 df['Converted'] = df['Record Status'].apply(lambda x: 1 if str(x).strip().lower() == "started" else 0)
 
-features = ['Priority Code', 'Lead Source', 'State', 'College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
+features = ['State', 'College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
 df_model = df[features + ['Converted']].dropna()
 X = df_model[features]
 y = df_model['Converted']
@@ -24,7 +24,15 @@ preprocessor = ColumnTransformer(
 
 pipeline = Pipeline(steps=[
     ('preprocessor', preprocessor),
-    ('classifier', RandomForestClassifier(random_state=42))
+    ('classifier', RandomForestClassifier(
+        n_estimators=50,
+        max_depth=8,
+        min_samples_split=10,
+        min_samples_leaf=4,
+        class_weight='balanced',
+        n_jobs=-1,
+        random_state=42
+    ))
 ])
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -34,8 +42,6 @@ pipeline.fit(X_train, y_train)
 st.title("Lead to Counselor Assignment App")
 st.write("Input new lead details to automatically assign the best counselor.")
 
-priority_code = st.selectbox("Priority Code", df['Priority Code'].dropna().unique())
-lead_source = st.selectbox("Lead Source", df['Lead Source'].dropna().unique())
 state = st.selectbox("State", df['State'].dropna().unique())
 college = st.selectbox("College", df['College'].dropna().unique())
 program_level = st.selectbox("Program Level", df['Program Level'].dropna().unique())
@@ -43,8 +49,6 @@ program_of_study = st.selectbox("Program of Study", df['Program of Study'].dropn
 
 if st.button("Assign Counselor"):
     new_lead_input = {
-        'Priority Code': priority_code,
-        'Lead Source': lead_source,
         'State': state,
         'College': college,
         'Program Level': program_level,
