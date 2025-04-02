@@ -1,97 +1,93 @@
+import pandas as pd 
 import streamlit as st
-import pandas as pd
-import pickle
-from xgboost import XGBClassifier
-from sklearn.preprocessing import OrdinalEncoder
+import joblib
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# ----------------------------
-# Cached model components
-# ----------------------------
-@st.cache_resource
-def load_model_and_encoder():
-    # Load your pre-trained model and encoder here (replace with actual file paths if saving to disk)
-    # For demo, re-create the logic (normally you'd use joblib/pickle files)
-    file_path = "Lead Conversion Data.xlsx"
-    xls = pd.ExcelFile(file_path)
-    df = xls.parse("Export")
+# Load and preprocess the data
+df = pd.read_excel("Lead Conversion Data.xlsx")
+df['Converted'] = df['Record Status'].apply(lambda x: 1 if str(x).strip().lower() == "started" else 0)
 
-    converted_statuses = {
-        'Application Needed', 'Application In', 'AC Enrollment',
-        'Started', 'Registered', 'Graduated',
-        'Campus - Cond. Accpt. Schol.', 'Campus - Cond. Accpt.', 'Campus - Accpt. Specs.'
+features = ['Priority Code', 'Lead Source', 'State', 'College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
+df_model = df[features + ['Converted']].dropna()
+X = df_model[features]
+y = df_model['Converted']
+
+categorical_features = features
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+    ])
+
+# Refined Random Forest pipeline
+pipeline = Pipeline(steps=[
+    ('preprocessor', preprocessor),
+    ('classifier', RandomForestClassifier(
+        n_estimators=200,
+        max_depth=10,
+        min_samples_split=5,
+        class_weight='balanced',
+        random_state=42
+    ))
+])
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+pipeline.fit(X_train, y_train)
+
+# Evaluate model
+st.subheader("Model Evaluation")
+y_pred = pipeline.predict(X_test)
+y_proba = pipeline.predict_proba(X_test)[:, 1]
+st.text("Classification Report:")
+st.text(classification_report(y_test, y_pred))
+st.text(f"ROC AUC Score: {roc_auc_score(y_test, y_proba):.3f}")
+
+# Define Streamlit UI
+st.title("Lead to Counselor Assignment App")
+st.write("Input new lead details to automatically assign the best counselor.")
+
+priority_code = st.selectbox("Priority Code", df['Priority Code'].dropna().unique())
+lead_source = st.selectbox("Lead Source", df['Lead Source'].dropna().unique())
+state = st.selectbox("State", df['State'].dropna().unique())
+college = st.selectbox("College", df['College'].dropna().unique())
+program_level = st.selectbox("Program Level", df['Program Level'].dropna().unique())
+program_of_study = st.selectbox("Program of Study", df['Program of Study'].dropna().unique())
+
+if st.button("Assign Counselor"):
+    new_lead_input = {
+        'Priority Code': priority_code,
+        'Lead Source': lead_source,
+        'State': state,
+        'College': college,
+        'Program Level': program_level,
+        'Program of Study': program_of_study
     }
-    df['Converted'] = df['Record Status'].isin(converted_statuses).astype(int)
 
-    model_df = df[[
-        'Lead Source', 'Program of Study', 'State', 'Priority Code',
-        'Campaign Code', 'Counselor', 'Counselor Level', 'Lead Created On', 'Converted'
-    ]].copy()
-    model_df['Lead Created On'] = pd.to_datetime(model_df['Lead Created On'], errors='coerce')
-    model_df['Lead Month'] = model_df['Lead Created On'].dt.month
-    model_df['Lead Weekday'] = model_df['Lead Created On'].dt.weekday
-    model_df.drop(columns=['Lead Created On'], inplace=True)
-    model_df.dropna(inplace=True)
+    counselors_df = df[['Counselor', 'Counselor Level']].dropna().drop_duplicates()
+    predictions = []
+    for _, row in counselors_df.iterrows():
+        lead_input = new_lead_input.copy()
+        lead_input['Counselor'] = row['Counselor']
+        lead_input['Counselor Level'] = row['Counselor Level']
+        candidate_df = pd.DataFrame([lead_input])
+        prob = pipeline.predict_proba(candidate_df)[0, 1]
+        predictions.append({
+            'Counselor': row['Counselor'],
+            'Counselor Level': row['Counselor Level'],
+            'Conversion_Probability': prob
+        })
 
-    X = model_df.drop(columns=['Converted'])
-    y = model_df['Converted']
-    encoder = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
-    X_encoded = encoder.fit_transform(X)
+    predictions_df = pd.DataFrame(predictions)
+    best_assignment = predictions_df.sort_values(by='Conversion_Probability', ascending=False).iloc[0]
 
-    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', scale_pos_weight=(y == 0).sum() / (y == 1).sum())
-    model.fit(X_encoded, y)
+    st.success(f"Best Counselor Assigned: {best_assignment['Counselor']} (Level: {best_assignment['Counselor Level']})")
+    st.write(f"Predicted Conversion Probability: {best_assignment['Conversion_Probability']:.2f}")
 
-    counselors_df = model_df[['Counselor', 'Counselor Level']].drop_duplicates().reset_index(drop=True)
-    return model, encoder, counselors_df
-
-# ----------------------------
-# Assignment Function
-# ----------------------------
-def assign_best_counselor(lead_data, model, encoder, counselors_df):
-    simulated = counselors_df.copy()
-    for key, value in lead_data.items():
-        simulated[key] = value
-
-    feature_cols = [
-        'Lead Source', 'Program of Study', 'State', 'Priority Code',
-        'Campaign Code', 'Counselor', 'Counselor Level', 'Lead Month', 'Lead Weekday'
-    ]
-    simulated = simulated[feature_cols]
-    encoded = encoder.transform(simulated)
-    simulated['Predicted Conversion Prob'] = model.predict_proba(encoded)[:, 1]
-
-    return simulated.sort_values(by='Predicted Conversion Prob', ascending=False).head(1)
-
-# ----------------------------
-# Streamlit UI
-# ----------------------------
-st.title("🎯 Lead Assignment Optimizer")
-
-model, encoder, counselors_df = load_model_and_encoder()
-
-with st.form("lead_form"):
-    st.subheader("Enter Lead Details")
-    lead_source = st.selectbox("Lead Source", options=['WEB', 'AFFILIATE', 'HYBRID'])
-    program = st.text_input("Program of Study", "Bachelor of Science in Psychology")
-    state = st.text_input("State (e.g., AZ, CA, TX)", "AZ")
-    priority = st.selectbox("Priority Code", options=['Cold', '*No Priority Assigned'])
-    campaign = st.text_input("Campaign Code", "Direct")
-    month = st.slider("Lead Month", 1, 12, 4)
-    weekday = st.slider("Lead Weekday (0=Mon)", 0, 6, 1)
-    submitted = st.form_submit_button("Find Best Counselor")
-
-    if submitted:
-        lead_input = {
-            'Lead Source': lead_source,
-            'Program of Study': program,
-            'State': state,
-            'Priority Code': priority,
-            'Campaign Code': campaign,
-            'Lead Month': month,
-            'Lead Weekday': weekday,
-        }
-
-        result = assign_best_counselor(lead_input, model, encoder, counselors_df)
-        best = result.iloc[0]
-
-        st.success(f"🏆 Best Counselor: **{best['Counselor']}**")
-        st.metric(label="Predicted Conversion Probability", value=f"{best['Predicted Conversion Prob']:.2%}")
+    st.subheader("All Counselor Predictions")
+    st.dataframe(predictions_df.sort_values(by='Conversion_Probability', ascending=False))
