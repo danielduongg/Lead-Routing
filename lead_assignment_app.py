@@ -10,7 +10,7 @@ from sklearn.model_selection import train_test_split
 df = pd.read_excel("Lead Conversion Data.xlsx")
 df['Converted'] = df['Record Type'].apply(lambda x: 1 if str(x).strip().lower() == "student" else 0)
 
-features = ['State', 'College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
+features = ['College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
 df_model = df[features + ['Converted']].dropna()
 X = df_model[features]
 y = df_model['Converted']
@@ -33,14 +33,12 @@ pipeline.fit(X_train, y_train)
 st.title("Lead to Counselor Assignment App")
 st.write("Input new lead details to automatically assign the best counselor.")
 
-state = st.selectbox("State", df['State'].dropna().unique())
 college = st.selectbox("College", df['College'].dropna().unique())
 program_level = st.selectbox("Program Level", df['Program Level'].dropna().unique())
 program_of_study = st.selectbox("Program of Study", df['Program of Study'].dropna().unique())
 
 if st.button("Assign Counselor"):
     new_lead_input = {
-        'State': state,
         'College': college,
         'Program Level': program_level,
         'Program of Study': program_of_study
