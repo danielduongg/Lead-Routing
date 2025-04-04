@@ -53,7 +53,8 @@ if st.button("Assign Counselor"):
         lead_input['Counselor'] = row['Counselor']
         lead_input['Counselor Level'] = row['Counselor Level']
         candidate_df = pd.DataFrame([lead_input])
-        prob = pipeline.predict_proba(candidate_df)[0, 1]
+        proba = pipeline.predict_proba(candidate_df)[0]
+        prob = proba[1] if len(proba) > 1 else proba[0]
         predictions.append({
             'Counselor': row['Counselor'],
             'Counselor Level': row['Counselor Level'],
