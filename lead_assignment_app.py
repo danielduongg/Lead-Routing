@@ -1,6 +1,5 @@
 import pandas as pd 
 import streamlit as st
-import joblib
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
@@ -9,7 +8,7 @@ from sklearn.model_selection import train_test_split
 
 # Load and preprocess the data
 df = pd.read_excel("Lead Conversion Data.xlsx")
-df['Converted'] = df['Record Status'].apply(lambda x: 1 if str(x).strip().lower() == "started" else 0)
+df['Converted'] = df['Record Type'].apply(lambda x: 1 if str(x).strip().lower() == "start" else 0)
 
 features = ['State', 'College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
 df_model = df[features + ['Converted']].dropna()
