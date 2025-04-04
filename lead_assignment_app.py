@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 
 # Load and preprocess the data
 df = pd.read_excel("Lead Conversion Data.xlsx")
-df['Converted'] = df['Record Type'].apply(lambda x: 1 if str(x).strip().lower() == "start" else 0)
+df['Converted'] = df['Record Type'].apply(lambda x: 1 if str(x).strip().lower() == "student" else 0)
 
 features = ['State', 'College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
 df_model = df[features + ['Converted']].dropna()
@@ -54,7 +54,8 @@ if st.button("Assign Counselor"):
         lead_input['Counselor Level'] = row['Counselor Level']
         candidate_df = pd.DataFrame([lead_input])
         proba = pipeline.predict_proba(candidate_df)[0]
-        prob = proba[1] if len(proba) > 1 else proba[0]
+        class_index = list(pipeline.classes_).index(1) if 1 in pipeline.classes_ else 0
+        prob = proba[class_index]
         predictions.append({
             'Counselor': row['Counselor'],
             'Counselor Level': row['Counselor Level'],
