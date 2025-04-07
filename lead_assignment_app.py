@@ -1,4 +1,4 @@
-import pandas as pd 
+import pandas as pd  
 import streamlit as st
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
@@ -9,6 +9,13 @@ from sklearn.model_selection import train_test_split
 # Load and preprocess the data
 df = pd.read_excel("Lead Conversion Data.xlsx")
 df['Converted'] = df['Record Type'].apply(lambda x: 1 if str(x).strip().lower() == "student" else 0)
+
+# Show time range
+if 'Created On' in df.columns:
+    df['Created On'] = pd.to_datetime(df['Created On'], errors='coerce')
+    min_date = df['Created On'].min()
+    max_date = df['Created On'].max()
+    st.markdown(f"**Data Time Range:** {min_date.date()} to {max_date.date()}")
 
 features = ['College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
 df_model = df[features + ['Converted']].dropna()
@@ -32,13 +39,6 @@ pipeline.fit(X_train, y_train)
 # Define Streamlit UI
 st.title("Lead to Counselor Assignment App")
 st.write("Input new lead details to automatically assign the best counselor.")
-
-# Show time range
-if 'Created On' in df.columns:
-    df['Created On'] = pd.to_datetime(df['Created On'], errors='coerce')
-    min_date = df['Created On'].min()
-    max_date = df['Created On'].max()
-    st.markdown(f"**Data Time Range:** {min_date.date()} to {max_date.date()}")
 
 college = st.selectbox("College", df['College'].dropna().unique())
 program_level = st.selectbox("Program Level", df['Program Level'].dropna().unique())
