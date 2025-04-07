@@ -33,6 +33,13 @@ pipeline.fit(X_train, y_train)
 st.title("Lead to Counselor Assignment App")
 st.write("Input new lead details to automatically assign the best counselor.")
 
+# Show time range
+if 'Created On' in df.columns:
+    df['Created On'] = pd.to_datetime(df['Created On'], errors='coerce')
+    min_date = df['Created On'].min()
+    max_date = df['Created On'].max()
+    st.markdown(f"**Data Time Range:** {min_date.date()} to {max_date.date()}")
+
 college = st.selectbox("College", df['College'].dropna().unique())
 program_level = st.selectbox("Program Level", df['Program Level'].dropna().unique())
 program_of_study = st.selectbox("Program of Study", df['Program of Study'].dropna().unique())
@@ -46,6 +53,7 @@ if st.button("Assign Counselor"):
 
     counselors_df = df[['Counselor', 'Counselor Level']].dropna().drop_duplicates()
     predictions = []
+
     for _, row in counselors_df.iterrows():
         lead_input = new_lead_input.copy()
         lead_input['Counselor'] = row['Counselor']
@@ -54,9 +62,17 @@ if st.button("Assign Counselor"):
         proba = pipeline.predict_proba(candidate_df)[0]
         class_index = list(pipeline.classes_).index(1) if 1 in pipeline.classes_ else 0
         prob = proba[class_index]
+
+        # Count total leads and total students per counselor
+        counselor_records = df[df['Counselor'] == row['Counselor']]
+        total_leads = len(counselor_records)
+        total_students = counselor_records['Converted'].sum()
+
         predictions.append({
             'Counselor': row['Counselor'],
             'Counselor Level': row['Counselor Level'],
+            'Total Leads': total_leads,
+            'Total Students': total_students,
             'Conversion_Probability': prob
         })
 
