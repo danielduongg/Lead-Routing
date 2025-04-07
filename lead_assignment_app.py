@@ -25,7 +25,8 @@ best_by_college = best_by_college.set_index('College')
 # Streamlit UI
 st.title("Lead Assignment by Conversion Rate")
 
-college = st.selectbox("Select College", sorted(df['College'].unique()))
+college_options = sorted(df['College'].dropna().unique())
+college = st.selectbox("Select College", college_options)
 
 if college in best_by_college.index:
     best = best_by_college.loc[college]
