@@ -1,86 +1,113 @@
-import pandas as pd  
+"""Lead-to-Counselor assignment app (baseline).
+
+Given a new lead's attributes, this app predicts which counselor is most likely
+to convert that lead into an enrolled student, using a Random Forest trained on
+historical lead/conversion data.
+"""
+
+import pandas as pd
 import streamlit as st
+from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import train_test_split
 
-# Load and preprocess the data
-df = pd.read_excel("Lead Conversion Data.xlsx")
-df['Converted'] = df['Record Type'].apply(lambda x: 1 if str(x).strip().lower() == "student" else 0)
+DATA_PATH = "Lead Conversion Data.xlsx"
+FEATURES = ["College", "Program Level", "Program of Study", "Counselor", "Counselor Level"]
 
-# Show time range
-if 'Created On' in df.columns:
-    df['Created On'] = pd.to_datetime(df['Created On'], errors='coerce')
-    min_date = df['Created On'].min()
-    max_date = df['Created On'].max()
-    st.markdown(f"**Data Time Range:** {min_date.date()} to {max_date.date()}")
 
-features = ['College', 'Program Level', 'Program of Study', 'Counselor', 'Counselor Level']
-df_model = df[features + ['Converted']].dropna()
-X = df_model[features]
-y = df_model['Converted']
+@st.cache_data(show_spinner="Loading lead data…")
+def load_data(path: str = DATA_PATH) -> pd.DataFrame:
+    # calamine is much faster than openpyxl on large workbooks; fall back if absent.
+    try:
+        df = pd.read_excel(path, engine="calamine")
+    except Exception:
+        df = pd.read_excel(path)
+    # Target: did this lead convert into a "Student"?
+    df["Converted"] = (
+        df["Record Type"].astype(str).str.strip().str.lower() == "student"
+    ).astype(int)
+    return df
 
-categorical_features = features
-preprocessor = ColumnTransformer(
-    transformers=[
-        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
-    ])
 
-pipeline = Pipeline(steps=[
-    ('preprocessor', preprocessor),
-    ('classifier', RandomForestClassifier(random_state=42))
-])
+@st.cache_resource(show_spinner="Training model…")
+def train_model(path: str = DATA_PATH) -> Pipeline:
+    df = load_data(path)
+    model_df = df[FEATURES + ["Converted"]].dropna()
+    X, y = model_df[FEATURES], model_df["Converted"]
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-pipeline.fit(X_train, y_train)
+    preprocessor = ColumnTransformer(
+        [("cat", OneHotEncoder(handle_unknown="ignore"), FEATURES)]
+    )
+    pipeline = Pipeline(
+        [
+            ("preprocessor", preprocessor),
+            (
+                "classifier",
+                RandomForestClassifier(
+                    n_estimators=100,
+                    max_depth=12,
+                    class_weight="balanced",
+                    random_state=42,
+                    n_jobs=-1,
+                ),
+            ),
+        ]
+    )
+    X_train, _, y_train, _ = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+    pipeline.fit(X_train, y_train)
+    return pipeline
 
-# Define Streamlit UI
+
+df = load_data()
+pipeline = train_model()
+
+# Show the time range of the underlying data (column is "Lead Created On").
+if "Lead Created On" in df.columns:
+    created = pd.to_datetime(df["Lead Created On"], errors="coerce")
+    if created.notna().any():
+        st.markdown(f"**Data Time Range:** {created.min().date()} to {created.max().date()}")
+
 st.title("Lead to Counselor Assignment App")
 st.write("Input new lead details to automatically assign the best counselor.")
 
-college = st.selectbox("College", df['College'].dropna().unique())
-program_level = st.selectbox("Program Level", df['Program Level'].dropna().unique())
-program_of_study = st.selectbox("Program of Study", df['Program of Study'].dropna().unique())
+college = st.selectbox("College", sorted(df["College"].dropna().unique()))
+program_level = st.selectbox("Program Level", sorted(df["Program Level"].dropna().unique()))
+program_of_study = st.selectbox(
+    "Program of Study", sorted(df["Program of Study"].dropna().unique())
+)
 
 if st.button("Assign Counselor"):
-    new_lead_input = {
-        'College': college,
-        'Program Level': program_level,
-        'Program of Study': program_of_study
-    }
+    # Build one candidate row per (Counselor, Counselor Level) and score them all at once.
+    counselors = (
+        df[["Counselor", "Counselor Level"]].dropna().drop_duplicates().reset_index(drop=True)
+    )
+    candidates = counselors.copy()
+    candidates["College"] = college
+    candidates["Program Level"] = program_level
+    candidates["Program of Study"] = program_of_study
 
-    counselors_df = df[['Counselor', 'Counselor Level']].dropna().drop_duplicates()
-    predictions = []
+    pos = list(pipeline.classes_).index(1) if 1 in pipeline.classes_ else 0
+    counselors["Conversion_Probability"] = pipeline.predict_proba(candidates[FEATURES])[:, pos]
 
-    for _, row in counselors_df.iterrows():
-        lead_input = new_lead_input.copy()
-        lead_input['Counselor'] = row['Counselor']
-        lead_input['Counselor Level'] = row['Counselor Level']
-        candidate_df = pd.DataFrame([lead_input])
-        proba = pipeline.predict_proba(candidate_df)[0]
-        class_index = list(pipeline.classes_).index(1) if 1 in pipeline.classes_ else 0
-        prob = proba[class_index]
+    # Historical volume per counselor for context.
+    stats = df.groupby("Counselor")["Converted"].agg(
+        **{"Total Leads": "size", "Total Students": "sum"}
+    )
+    results = (
+        counselors.merge(stats, left_on="Counselor", right_index=True, how="left")
+        .sort_values("Conversion_Probability", ascending=False)
+        .reset_index(drop=True)
+    )
 
-        # Count total leads and total students per counselor
-        counselor_records = df[df['Counselor'] == row['Counselor']]
-        total_leads = len(counselor_records)
-        total_students = counselor_records['Converted'].sum()
-
-        predictions.append({
-            'Counselor': row['Counselor'],
-            'Counselor Level': row['Counselor Level'],
-            'Total Leads': total_leads,
-            'Total Students': total_students,
-            'Conversion_Probability': prob
-        })
-
-    predictions_df = pd.DataFrame(predictions)
-    best_assignment = predictions_df.sort_values(by='Conversion_Probability', ascending=False).iloc[0]
-
-    st.success(f"Best Counselor Assigned: {best_assignment['Counselor']} (Level: {best_assignment['Counselor Level']})")
-    st.write(f"Predicted Conversion Probability: {best_assignment['Conversion_Probability']:.2f}")
+    best = results.iloc[0]
+    st.success(
+        f"Best Counselor Assigned: {best['Counselor']} (Level: {best['Counselor Level']})"
+    )
+    st.write(f"Predicted Conversion Probability: {best['Conversion_Probability']:.2f}")
 
     st.subheader("All Counselor Predictions")
-    st.dataframe(predictions_df.sort_values(by='Conversion_Probability', ascending=False))
+    st.dataframe(results)
